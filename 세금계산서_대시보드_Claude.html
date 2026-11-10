@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>세금계산서 매입·매출 대시보드</title>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #fff; --text: #1f2933; --muted: #6b7280; --line: #e5e7eb;
+    --sales: #2563eb; --purchase: #ea580c; --plus: #15803d; --minus: #b91c1c;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; background: var(--bg); color: var(--text); }
+  header { background: #1e293b; color: #fff; padding: 16px 20px; }
+  header h1 { margin: 0 0 12px; font-size: 1.35rem; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .btn { border: 0; border-radius: 6px; padding: 9px 14px; font-size: .95rem; cursor: pointer; background: #fff; color: #1e293b; font-weight: 600; }
+  .btn:hover { background: #e2e8f0; }
+  .btn.primary { background: var(--sales); color: #fff; }
+  .btn.primary:hover { background: #1d4ed8; }
+  #fileInput { display: none; }
+  #source { margin-top: 10px; font-size: .88rem; color: #cbd5e1; word-break: break-all; }
+  #message { display: none; margin: 12px 20px 0; padding: 10px 14px; border-radius: 6px; background: #fee2e2; color: var(--minus); font-weight: 600; }
+  #message.ok { background: #dcfce7; color: var(--plus); }
+  nav.tabs { display: flex; gap: 4px; padding: 14px 20px 0; border-bottom: 1px solid var(--line); }
+  nav.tabs button { border: 1px solid var(--line); border-bottom: 0; background: #e9ecf1; padding: 10px 22px; border-radius: 8px 8px 0 0; font-size: 1rem; cursor: pointer; color: var(--muted); }
+  nav.tabs button.active { background: var(--card); color: var(--text); font-weight: 700; }
+  main { padding: 16px 20px 40px; max-width: 1100px; margin: 0 auto; }
+  .panel { display: none; }
+  .panel.active { display: block; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .card .label { font-size: .85rem; color: var(--muted); }
+  .card .value { font-size: 1.35rem; font-weight: 700; margin-top: 4px; word-break: keep-all; }
+  .card .sub { font-size: .82rem; color: var(--muted); margin-top: 4px; }
+  .card.sales .value { color: var(--sales); }
+  .card.purchase .value { color: var(--purchase); }
+  .box { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; }
+  .box h2 { font-size: 1.05rem; margin: 0 0 10px; }
+  .legend { display: flex; gap: 14px; font-size: .85rem; margin-bottom: 6px; }
+  .legend span::before { content: ""; display: inline-block; width: 12px; height: 12px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; background: var(--c); }
+  svg.chart { width: 100%; height: auto; display: block; }
+  .search { width: 100%; max-width: 360px; padding: 9px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: .95rem; margin-bottom: 10px; }
+  .table-wrap { width: 100%; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: .9rem; min-width: 560px; }
+  th, td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+  th { background: #f1f5f9; font-weight: 700; }
+  th:nth-child(2), td:nth-child(2) { text-align: left; white-space: normal; }
+  th:first-child, td:first-child { text-align: center; }
+  td.empty { text-align: center; color: var(--muted); padding: 24px; }
+  .neg { color: var(--minus); }
+  .pos { color: var(--plus); }
+  .nodata { color: var(--muted); padding: 30px 0; text-align: center; }
+  @media (max-width: 600px) {
+    header h1 { font-size: 1.1rem; }
+    nav.tabs { padding: 10px 10px 0; }
+    nav.tabs button { flex: 1; padding: 9px 4px; font-size: .92rem; }
+    main { padding: 12px 10px 30px; }
+    .card .value { font-size: 1.15rem; }
+    .btn { flex: 1; }
+  }
+  @media print {
+    .no-print, nav.tabs, header .toolbar, #message, .search { display: none !important; }
+    body { background: #fff; }
+    header { background: #fff; color: #000; padding: 0 0 8px; border-bottom: 2px solid #000; }
+    #source { color: #333; }
+    main { padding: 10px 0; max-width: none; }
+    .box, .card { break-inside: avoid; }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .table-wrap { overflow: visible; }
+    table { min-width: 0; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>세금계산서 매입·매출 대시보드</h1>
+  <div class="toolbar">
+    <button class="btn primary" id="uploadBtn" type="button">파일 올리기 (.xls, 여러 개 가능)</button>
+    <input type="file" id="fileInput" accept=".xls,.xlsx" multiple>
+    <button class="btn" id="resetBtn" type="button">초기화</button>
+    <button class="btn" id="printBtn" type="button">인쇄</button>
+  </div>
+  <div id="source"></div>
+</header>
+
+<div id="message" role="alert"></div>
+
+<nav class="tabs" role="tablist">
+  <button type="button" data-tab="summary" class="active">요약</button>
+  <button type="button" data-tab="sales">매출</button>
+  <button type="button" data-tab="purchase">매입</button>
+</nav>
+
+<main>
+  <section class="panel active" id="panel-summary">
+    <div class="cards" id="summaryCards"></div>
+    <div class="box">
+      <h2>월별 매출·매입 비교 (공급가액)</h2>
+      <div class="legend"><span style="--c:var(--sales)">매출</span><span style="--c:var(--purchase)">매입</span></div>
+      <div id="summaryChart"></div>
+    </div>
+  </section>
+
+  <section class="panel" id="panel-sales"></section>
+  <section class="panel" id="panel-purchase"></section>
+</main>
+
+<script>
+// ===== 샘플 데이터 (가상의 상호, 실제 거래 아님) =====
+// 형식: [작성일자, 거래처 상호, 공급가액, 세액]
+const SAMPLE = {"sales":[["2023-01-14","(주)한빛설비서비스",10806000,1080600],["2023-03-09","(주)한빛설비서비스",5516000,551600],["2023-03-11","새봄학원",4881000,488100],["2023-03-19","(주)한빛설비서비스",17951000,1795100],["2023-04-01","(주)한빛설비서비스",4031000,403100],["2023-04-04","푸른숲빌딩관리",4887000,488700],["2023-05-12","푸른숲빌딩관리",1915000,191500],["2023-05-13","하늘정밀(주)",1738000,173800],["2023-06-01","온누리병원",6766000,676600],["2023-06-05","(주)한빛설비서비스",31244000,3124400],["2023-06-08","(주)한빛설비서비스",5427000,542700],["2023-06-08","(주)한빛설비서비스",6976000,697600],["2023-06-08","(주)한빛설비서비스",8146000,814600],["2023-06-16","푸른숲빌딩관리",1688000,168800],["2023-06-16","푸른숲빌딩관리",40343000,4034300],["2023-06-22","(주)한빛설비서비스",2892000,289200],["2023-06-25","(주)한빛설비서비스",3171000,317100],["2023-07-01","새봄학원",11019000,1101900],["2023-07-03","(주)한빛설비서비스",2747000,274700],["2023-07-07","(주)한빛설비서비스",12567000,1256700],["2023-07-08","푸른숲빌딩관리",70103000,7010300],["2023-07-12","푸른숲빌딩관리",3634000,363400],["2023-07-15","(주)한빛설비서비스",11051000,1105100],["2023-07-18","(주)한빛설비서비스",12909000,1290900],["2023-08-01","(주)한빛설비서비스",6676000,667600],["2023-08-03","하늘정밀(주)",3373000,337300],["2023-08-08","(주)한빛설비서비스",7211000,721100],["2023-08-16","(주)바른카페 강남점",7773000,777300],["2023-08-16","(주)한빛설비서비스",3886000,388600],["2023-08-17","미래물류센터",60828000,6082800],["2023-08-21","(주)다온푸드",-2400000,-240000],["2023-08-21","(주)다온푸드",2150000,215000],["2023-08-21","푸른숲빌딩관리",2595000,259500],["2023-08-26","온누리병원",11166000,1116600],["2023-09-24","(주)다온푸드",8339000,833900],["2023-10-09","(주)바른카페 강남점",8534000,853400],["2023-10-15","(주)한빛설비서비스",3521000,352100],["2023-10-23","(주)다온푸드",10429000,1042900],["2023-10-24","(주)한빛설비서비스",6319000,631900],["2023-10-28","(주)바른카페 강남점",5119000,511900],["2023-12-03","새봄학원",5657000,565700],["2023-12-15","(주)한빛설비서비스",7846000,784600]],"purchase":[["2023-01-03","스카이테크",10168000,1016800],["2023-01-11","대한냉동부품",5580000,558000],["2023-01-19","우리세무회계",8504000,850400],["2023-02-07","사철에어컨",9083000,908300],["2023-02-23","시원바람공조",6504000,650400],["2023-02-26","사철에어컨",4507000,450700],["2023-03-12","시원바람공조",3249000,324900],["2023-03-16","시원바람공조",6364000,636400],["2023-04-04","사철에어컨",2191000,219100],["2023-04-20","동네철물상사",4795000,479500],["2023-05-03","시원바람공조",7373000,737300],["2023-05-09","스카이테크",1448000,144800],["2023-05-09","시원바람공조",8556000,855600],["2023-05-25","시원바람공조",10377000,1037700],["2023-06-18","대한냉동부품",3548000,354800],["2023-06-21","시원바람공조",13425000,1342500],["2023-07-01","시원바람공조",9287000,928700],["2023-07-17","한결공조시스템",2283000,228300],["2023-07-18","대한냉동부품",13138000,1313800],["2023-07-18","스카이테크",8053000,805300],["2023-07-22","스카이테크",9356000,935600],["2023-07-24","시원바람공조",8702000,870200],["2023-07-25","우리세무회계",8387000,838700],["2023-08-03","스카이테크",2389000,238900],["2023-08-12","동네철물상사",2234000,223400],["2023-08-16","한결공조시스템",2641000,264100],["2023-08-17","한결공조시스템",8003000,800300],["2023-09-03","맑은설비",11938000,1193800],["2023-09-15","한결공조시스템",3481000,348100],["2023-09-20","시원바람공조",4551000,455100],["2023-09-25","시원바람공조",6905000,690500],["2023-10-05","대한냉동부품",15921000,1592100],["2023-10-09","우리세무회계",9151000,915100],["2023-10-15","시원바람공조",7901000,790100],["2023-10-22","스카이테크",4879000,487900],["2023-11-05","동네철물상사",2572000,257200],["2023-11-10","맑은설비",-1800000,-180000],["2023-11-10","맑은설비",1650000,165000],["2023-11-14","동네철물상사",9044000,904400],["2023-12-13","사철에어컨",5381000,538100],["2023-12-14","우리세무회계",6303000,630300],["2023-12-20","스카이테크",5218000,521800]]};
+
+const LABEL = { sales: "매출", purchase: "매입" };
+let state = { sales: [], purchase: [], source: "" };
+
+function fromSample() {
+  const conv = rows => rows.map(r => ({ date: r[0], partner: r[1], supply: r[2], tax: r[3], total: r[2] + r[3] }));
+  return { sales: conv(SAMPLE.sales), purchase: conv(SAMPLE.purchase), source: "샘플 데이터 (가상의 거래처)" };
+}
+
+// ===== 숫자 형식 =====
+const won = n => Math.round(n).toLocaleString("ko-KR") + "원";
+function toNum(v) {
+  if (typeof v === "number") return v;
+  const n = Number(String(v ?? "").replace(/[,\s원]/g, ""));
+  return isNaN(n) ? 0 : n;
+}
+function toDate(v) {
+  if (v instanceof Date) {
+    const p = x => String(x).padStart(2, "0");
+    return `${v.getFullYear()}-${p(v.getMonth() + 1)}-${p(v.getDate())}`;
+  }
+  const s = String(v ?? "").trim();
+  return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : null;
+}
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// ===== 집계 =====
+function totals(rows) {
+  return rows.reduce((a, r) => ({ supply: a.supply + r.supply, tax: a.tax + r.tax, total: a.total + r.total, count: a.count + 1 }),
+    { supply: 0, tax: 0, total: 0, count: 0 });
+}
+function byPartner(rows) {
+  const map = new Map();
+  rows.forEach(r => {
+    const p = map.get(r.partner) || { partner: r.partner, count: 0, supply: 0, tax: 0, total: 0 };
+    p.count++; p.supply += r.supply; p.tax += r.tax; p.total += r.total;
+    map.set(r.partner, p);
+  });
+  return [...map.values()].sort((a, b) => b.supply - a.supply);
+}
+function monthKeys() {
+  const all = [...state.sales, ...state.purchase].map(r => r.date.slice(0, 7)).sort();
+  if (!all.length) return [];
+  const keys = [];
+  let [y, m] = all[0].split("-").map(Number);
+  const [ey, em] = all[all.length - 1].split("-").map(Number);
+  while (y < ey || (y === ey && m <= em)) {
+    keys.push(`${y}-${String(m).padStart(2, "0")}`);
+    m++; if (m > 12) { m = 1; y++; }
+  }
+  return keys;
+}
+function byMonth(rows, keys) {
+  const sum = Object.fromEntries(keys.map(k => [k, 0]));
+  rows.forEach(r => { const k = r.date.slice(0, 7); if (k in sum) sum[k] += r.supply; });
+  return keys.map(k => sum[k]);
+}
+
+// ===== 그래프 (SVG 막대) =====
+function shortWon(n) {
+  const a = Math.abs(n);
+  if (a >= 1e8) return (n / 1e8).toFixed(a >= 1e9 ? 0 : 1).replace(/\.0$/, "") + "억";
+  if (a >= 1e4) return Math.round(n / 1e4).toLocaleString("ko-KR") + "만";
+  return String(Math.round(n));
+}
+function drawChart(keys, series) {
+  if (!keys.length) return '<p class="nodata">표시할 데이터가 없습니다.</p>';
+  const W = 800, H = 300, L = 56, R = 10, T = 10, B = 34;
+  const vals = series.flatMap(s => s.values);
+  let max = Math.max(0, ...vals), min = Math.min(0, ...vals);
+  if (max === min) max = 1;
+  const step = niceStep((max - min) / 5);
+  max = Math.ceil(max / step) * step; min = Math.floor(min / step) * step;
+  const y = v => T + (H - T - B) * (max - v) / (max - min);
+  const gw = (W - L - R) / keys.length;
+  const bw = Math.min(28, (gw * 0.75) / series.length);
+  const multiYear = new Set(keys.map(k => k.slice(0, 4))).size > 1;
+  let g = "";
+  for (let v = min; v <= max + 1e-9; v += step) {
+    g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="${v === 0 ? "#94a3b8" : "#e5e7eb"}"/>`;
+    g += `<text x="${L - 6}" y="${y(v) + 4}" font-size="11" text-anchor="end" fill="#6b7280">${shortWon(v)}</text>`;
+  }
+  keys.forEach((k, i) => {
+    const cx = L + gw * i + gw / 2;
+    const x0 = cx - (bw * series.length) / 2;
+    series.forEach((s, j) => {
+      const v = s.values[i], top = y(Math.max(v, 0)), h = Math.abs(y(v) - y(0));
+      g += `<rect x="${x0 + bw * j}" y="${top}" width="${bw - 2}" height="${Math.max(h, 0)}" fill="${s.color}" rx="2"><title>${k} ${s.name}: ${won(v)}</title></rect>`;
+    });
+    const lab = multiYear ? `${k.slice(2, 4)}.${Number(k.slice(5))}` : `${Number(k.slice(5))}월`;
+    g += `<text x="${cx}" y="${H - 12}" font-size="12" text-anchor="middle" fill="#374151">${lab}</text>`;
+  });
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="월별 막대그래프">${g}</svg>`;
+}
+function niceStep(raw) {
+  const p = Math.pow(10, Math.floor(Math.log10(raw || 1)));
+  const f = raw / p;
+  return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p;
+}
+
+// ===== 화면 그리기 =====
+function card(cls, label, value, sub) {
+  return `<div class="card ${cls}"><div class="label">${label}</div><div class="value">${value}</div>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
+}
+function renderSummary(keys) {
+  const s = totals(state.sales), p = totals(state.purchase);
+  const diff = s.supply - p.supply, diffT = s.total - p.total;
+  document.getElementById("summaryCards").innerHTML =
+    card("sales", "총 매출 (공급가액)", won(s.supply), `합계금액 ${won(s.total)} · ${s.count}건`) +
+    card("purchase", "총 매입 (공급가액)", won(p.supply), `합계금액 ${won(p.total)} · ${p.count}건`) +
+    card("", "차이 (매출 − 매입, 공급가액)", `<span class="${diff < 0 ? "neg" : "pos"}">${won(diff)}</span>`, `합계금액 기준 ${won(diffT)}`);
+  document.getElementById("summaryChart").innerHTML = drawChart(keys, [
+    { name: "매출", color: "var(--sales)", values: byMonth(state.sales, keys) },
+    { name: "매입", color: "var(--purchase)", values: byMonth(state.purchase, keys) }
+  ]);
+}
+function renderKind(kind, keys) {
+  const rows = state[kind], panel = document.getElementById("panel-" + kind);
+  const t = totals(rows);
+  const color = kind === "sales" ? "var(--sales)" : "var(--purchase)";
+  if (!rows.length) {
+    panel.innerHTML = `<div class="box"><p class="nodata">${LABEL[kind]} 데이터가 없습니다. 홈택스 ${LABEL[kind]} 세금계산서 목록 파일을 올려 주세요.</p></div>`;
+    return;
+  }
+  panel.innerHTML = `
+    <div class="cards">
+      ${card(kind, "총 공급가액", won(t.supply))}
+      ${card("", "총 세액", won(t.tax))}
+      ${card("", "총 합계금액", won(t.total))}
+      ${card("", "건수", t.count.toLocaleString("ko-KR") + "건")}
+    </div>
+    <div class="box">
+      <h2>월별 ${LABEL[kind]} (공급가액)</h2>
+      ${drawChart(keys, [{ name: LABEL[kind], color, values: byMonth(rows, keys) }])}
+    </div>
+    <div class="box">
+      <h2>거래처별 ${LABEL[kind]}</h2>
+      <input type="search" class="search" placeholder="거래처 상호 검색" aria-label="거래처 상호 검색" data-kind="${kind}">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>순위</th><th>상호</th><th>건수</th><th>공급가액</th><th>세액</th><th>합계금액</th><th>비율</th></tr></thead>
+          <tbody id="tbody-${kind}"></tbody>
+        </table>
+      </div>
+    </div>`;
+  panel.querySelector(".search").addEventListener("input", e => renderTable(kind, e.target.value));
+  renderTable(kind, "");
+}
+function renderTable(kind, query) {
+  const list = byPartner(state[kind]);
+  const total = totals(state[kind]).supply;
+  const q = query.trim().toLowerCase();
+  const html = list.map((p, i) => ({ ...p, rank: i + 1 }))
+    .filter(p => !q || p.partner.toLowerCase().includes(q))
+    .map(p => `<tr><td>${p.rank}</td><td>${esc(p.partner)}</td><td>${p.count}</td>
+      <td class="${p.supply < 0 ? "neg" : ""}">${won(p.supply)}</td><td>${won(p.tax)}</td><td>${won(p.total)}</td>
+      <td>${total ? (p.supply / total * 100).toFixed(1) : "0.0"}%</td></tr>`).join("");
+  document.getElementById("tbody-" + kind).innerHTML = html || `<tr><td class="empty" colspan="7">검색 결과가 없습니다</td></tr>`;
+}
+function render() {
+  const keys = monthKeys();
+  document.getElementById("source").textContent = "현재 데이터: " + state.source;
+  renderSummary(keys);
+  renderKind("sales", keys);
+  renderKind("purchase", keys);
+}
+
+// ===== 메시지 =====
+function showMessage(text, ok) {
+  const m = document.getElementById("message");
+  m.textContent = text;
+  m.className = ok ? "ok" : "";
+  m.style.display = "block";
+}
+function hideMessage() { document.getElementById("message").style.display = "none"; }
+
+// ===== 홈택스 엑셀 읽기 =====
+function parseHometax(aoa, fileName) {
+  const title = String((aoa[4] || [])[0] || "");
+  let kind = null;
+  if (title.includes("세금계산서")) kind = title.includes("매출") ? "sales" : title.includes("매입") ? "purchase" : null;
+  if (!kind) throw new Error(`"${fileName}"은(는) 홈택스 세금계산서 목록 파일이 아닙니다.`);
+  const head = (aoa[5] || []).map(h => String(h ?? "").trim());
+  const iDate = head.indexOf("작성일자");
+  const nameCols = head.map((h, i) => h === "상호" ? i : -1).filter(i => i >= 0);
+  const iTotal = head.indexOf("합계금액"), iSupply = head.indexOf("공급가액"), iTax = head.indexOf("세액");
+  if (iDate < 0 || nameCols.length < 2 || iTotal < 0 || iSupply < 0 || iTax < 0)
+    throw new Error(`"${fileName}"의 머리글(작성일자, 상호, 합계금액, 공급가액, 세액)을 찾을 수 없습니다.`);
+  const iPartner = kind === "sales" ? nameCols[1] : nameCols[0];
+  const rows = [];
+  for (let r = 6; r < aoa.length; r++) {
+    const row = aoa[r] || [];
+    const date = toDate(row[iDate]);
+    if (!date) continue;
+    rows.push({ date, partner: String(row[iPartner] ?? "").trim() || "(상호 없음)",
+      supply: toNum(row[iSupply]), tax: toNum(row[iTax]), total: toNum(row[iTotal]) });
+  }
+  if (!rows.length) throw new Error(`"${fileName}"에 세금계산서 자료가 없습니다.`);
+  return { kind, rows };
+}
+
+async function handleFiles(files) {
+  if (!files.length) return;
+  if (typeof XLSX === "undefined") {
+    showMessage("엑셀 읽기 도구(SheetJS)를 불러오지 못했습니다. 인터넷 연결을 확인한 뒤 새로고침해 주세요. 기존 데이터는 그대로 유지됩니다.");
+    return;
+  }
+  const next = { sales: [], purchase: [] };
+  const names = [];
+  try {
+    for (const f of files) {
+      let aoa;
+      try {
+        const wb = XLSX.read(await f.arrayBuffer(), { type: "array", cellDates: true });
+        aoa = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: null });
+      } catch (e) {
+        throw new Error(`"${f.name}"을(를) 엑셀 파일로 읽을 수 없습니다.`);
+      }
+      const { kind, rows } = parseHometax(aoa, f.name);
+      next[kind].push(...rows);
+      names.push(`${f.name} (${LABEL[kind]})`);
+    }
+  } catch (e) {
+    showMessage(e.message + " 기존 데이터는 그대로 유지됩니다.");
+    return;
+  }
+  state = { sales: next.sales, purchase: next.purchase, source: "내 파일 — " + names.join(", ") };
+  render();
+  showMessage(`파일 ${files.length}개를 불러왔습니다.`, true);
+}
+
+// ===== 이벤트 =====
+document.querySelectorAll("nav.tabs button").forEach(b => b.addEventListener("click", () => {
+  document.querySelectorAll("nav.tabs button").forEach(x => x.classList.toggle("active", x === b));
+  document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === "panel-" + b.dataset.tab));
+}));
+const fileInput = document.getElementById("fileInput");
+document.getElementById("uploadBtn").addEventListener("click", () => fileInput.click());
+fileInput.addEventListener("change", async () => { await handleFiles([...fileInput.files]); fileInput.value = ""; });
+document.getElementById("resetBtn").addEventListener("click", () => { state = fromSample(); render(); hideMessage(); });
+document.getElementById("printBtn").addEventListener("click", () => window.print());
+
+state = fromSample();
+render();
+</script>
+</body>
+</html>
